@@ -1,0 +1,154 @@
+#version: '3.8'
+
+networks:
+  kafka-net:
+    driver: bridge
+
+volumes:
+  zookeeper_data:
+  kafka_data:
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    container_name: zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/bitnami/zookeeper
+    networks:
+      - kafka-net
+    restart: always
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "-w", "2", "localhost", "2181"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    networks:
+      - kafka-net
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=localhost:9092
+      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181
+      - KAFKA_UI_AUTH_ENABLED=true
+      - KAFKA_UI_AUTH_USERNAME=admin
+      - KAFKA_UI_AUTH_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    networks:
+      - kafka-net
+    restart: always
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8080"]
+      interval: 30s
+      timeout: 60s
+      retries: 10
+
+  postgres-db1:
+    image: postgres:latest
+    container_name: postgres1
+    environment:
+      POSTGRES_USER: user1
+      POSTGRES_PASSWORD: password1
+      POSTGRES_DB: db1
+    ports:
+      - "5444:5432"
+    networks:
+      - kafka-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-db2:
+    image: postgres:latest
+    container_name: postgres2
+    environment:
+      POSTGRES_USER: user2
+      POSTGRES_PASSWORD: password2
+      POSTGRES_DB: db2
+    ports:
+      - "5445:5432"  # Changed port from 5433 to 5434 to avoid conflict
+    networks:
+      - kafka-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user2"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  debezium:
+    image: debezium/connect:2.7.2.Final
+    container_name: debezium
+    platform: linux/amd64
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-db1:
+        condition: service_healthy
+      postgres-db2:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    networks:
+      - kafka-net
+    restart: always
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: debezium_config
+      OFFSET_STORAGE_TOPIC: debezium_offset
+      STATUS_STORAGE_TOPIC: debezium_status
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "debezium"
+      CONNECT_GROUP_ID: "kafka-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      # Suppress all logging
+      LOG4J_LOGGER: "OFF"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10

@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: debezium-demo
+  datasource:
+    url: jdbc:postgresql://localhost:5444/db1
+    username: user1
+    password: password1
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  # Configuring second datasource for db2
+  second-datasource:
+    url: jdbc:postgresql://localhost:5445/db2
+    username: user2
+    password: password2
+    driver-class-name: org.postgresql.Driver
+
+kafka:
+  bootstrap-servers: localhost:9092
+
+# Debezium connector configuration for PostgreSQL changes in db1
+debezium:
+  name: postgres-connector
+  connector.class: io.debezium.connector.postgresql.PostgresConnector
+  database.hostname: localhost
+  database.port: 5444
+  database.user: user1
+  database.password: password1
+  database.dbname: db1
+  database.server.name: postgres-server
+  table.include.list: public.persons
+  database.history.kafka.bootstrap.servers: localhost:9092
+  database.history.kafka.topic: schema-changes.postgres
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    io.debezium: INFO
+
+server:
+  port: 8888
